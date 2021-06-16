@@ -7,6 +7,8 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 
+import config
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -51,7 +53,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
                 break
 
 
-def test(model, device, test_loader):
+def test(model, device, test_loader, i):
     model.eval()
     test_loss = 0
     correct = 0
@@ -68,6 +70,9 @@ def test(model, device, test_loader):
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
+
+    config.tensorboard.add_scalar("test/loss", test_loss, i)
+    config.tensorboard.add_scalar("test/accuracy", correct / len(test_loader.dataset), i)
 
 
 def main():
@@ -104,7 +109,7 @@ def main():
     scheduler = StepLR(optimizer, step_size=1, gamma=config.gamma)
     for epoch in range(1, config.epochs + 1):
         train(config, model, device, train_loader, optimizer, epoch)
-        test(model, device, test_loader)
+        test(model, device, test_loader, epoch)
         scheduler.step()
 
     if config.save_model:
