@@ -95,7 +95,7 @@ def main():
         ])
     dataset1 = datasets.MNIST('./mnist_torchvision/', train=True, download=True, transform=transform)
     dataset2 = datasets.MNIST('./mnist_torchvision/', train=False, transform=transform)
-    train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
+    train_loader = torch.utils.data.DataLoader(dataset1, **train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
     model = Net().to(device)
