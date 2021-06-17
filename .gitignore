@@ -2,3 +2,6 @@
 /mnist_torchvision/
 /.idea/
 mnist.npz
+/mnist_torchvision/
+/runs/
+/wandb/
