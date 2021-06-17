@@ -97,18 +97,18 @@ def train(args, model, device, train_loader, optimizer, epoch):
 def train_constrained(args, model, device, train_loader_original, train_loader_new, optimizer, epoch, loss_on_previous):
   model.train()
   for batch_idx, (data, target, _) in enumerate(train_loader_new):
-    optimizer.zero_grad()
+    # optimizer.zero_grad()
 
     # Primals
     data, target = data.to(device), target.to(device)
-    output = model(data)
 
     # Duals (need to load in previous data for that)
     previous_data, previous_target, _ = iter(train_loader_original).next()  # TODO: is this randomized? If not, randomize.
-    dual_output = model(previous_data)
 
     def closure():
+      output = model(data)
       loss = F.nll_loss(output, target)
+      dual_output = model(previous_data)
       dual_loss = F.nll_loss(dual_output, previous_target)
       eq_defect = torch.relu(dual_loss - loss_on_previous)  # max(defect, 0.)
       eq_defect = [eq_defect.reshape(1, -1), ]
