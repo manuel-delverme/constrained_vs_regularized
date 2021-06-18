@@ -116,8 +116,8 @@ def train_constrained(args, model, device, train_loader_original,
             loss = F.nll_loss(output, target)
             dual_output = model(previous_data)
             dual_loss = F.nll_loss(dual_output, previous_target)
-            eq_defect = [torch.relu(dual_loss - loss_on_previous - 0.025).reshape(1, -1), ]  # max(defect, 0.)
-            return loss, eq_defect, None
+            ineq_defect = [(dual_loss - loss_on_previous - 0.025).reshape(1, -1), ]  # max(defect, 0.)
+            return loss, None, ineq_defect
 
         optimizer.step(closure)
 
@@ -136,10 +136,10 @@ def train_constrained(args, model, device, train_loader_original,
             # print("together they give index", (epoch-1) * len(train_loader_new) + batch_idx)
 
             config.tensorboard.add_scalar("constrained_train/loss", loss.item(),
-                                          (epoch-1) * len(train_loader_new) + batch_idx + previous_idx)
+                                          (epoch - 1) * len(train_loader_new) + batch_idx + previous_idx)
             for j, defect in enumerate(eq_defect):
                 config.tensorboard.add_scalar("constrained_train/defect_{}".format(j), defect.item(),
-                                              (epoch-1) * len(train_loader_new) + batch_idx + previous_idx)
+                                              (epoch - 1) * len(train_loader_new) + batch_idx + previous_idx)
             if args.dry_run:
                 break
 
