@@ -48,6 +48,6 @@ urllib3==1.26.5
 wandb==0.10.31
 yarl==1.6.3
 zipp==3.4.1
-
+torch-constrained
 torchvision~=0.9.1
 torch~=1.8.1
