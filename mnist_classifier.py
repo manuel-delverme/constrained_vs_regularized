@@ -84,17 +84,23 @@ def train(args, model, device, train_loader, optimizer, epoch):
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                        100. * batch_idx / len(train_loader), loss.item()))
 
+            # print("epoch is", epoch)
+            # print("length of train loader is", len(train_loader))
+            # print("batch_idx is", batch_idx)
+            # print("together they give index", (epoch - 1) * len(train_loader) + batch_idx)
+
             config.tensorboard.add_scalar("train/loss", loss.item(),
-                                          epoch * len(train_loader) + batch_idx)
+                                          (epoch - 1) * len(train_loader) + batch_idx)
             if args.dry_run:
                 break
-        break
+        # break
 
     # Return the final loss
-    return loss
+    return loss, (epoch - 1) * len(train_loader) + batch_idx
 
 
-def train_constrained(args, model, device, train_loader_original, train_loader_new, optimizer, epoch, loss_on_previous):
+def train_constrained(args, model, device, train_loader_original,
+                      train_loader_new, optimizer, epoch, loss_on_previous, previous_idx):
     model.train()
     for batch_idx, (data, target, _) in enumerate(train_loader_new):
         # optimizer.zero_grad()
@@ -110,22 +116,30 @@ def train_constrained(args, model, device, train_loader_original, train_loader_n
             loss = F.nll_loss(output, target)
             dual_output = model(previous_data)
             dual_loss = F.nll_loss(dual_output, previous_target)
-            eq_defect = [torch.relu(dual_loss - loss_on_previous).reshape(1, -1), ]  # max(defect, 0.)
+            eq_defect = [torch.relu(dual_loss - loss_on_previous - 0.025).reshape(1, -1), ]  # max(defect, 0.)
             return loss, eq_defect, None
 
         optimizer.step(closure)
 
         if batch_idx % args.log_interval == 0:
             loss, eq_defect, _ = closure()
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+            print('Constrained Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader_new.dataset),
                        100. * batch_idx / len(train_loader_new), loss.item()))
+            print('Constrained Defect Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_loader_new.dataset),
+                       100. * batch_idx / len(train_loader_new), eq_defect[0].item()))
 
-            config.tensorboard.add_scalar("train/loss", loss.item(),
-                                          epoch * len(train_loader_new) + batch_idx)
+            # print("epoch is", epoch)
+            # print("length of train loader is", len(train_loader_new))
+            # print("batch_idx is", batch_idx)
+            # print("together they give index", (epoch-1) * len(train_loader_new) + batch_idx)
+
+            config.tensorboard.add_scalar("constrained_train/loss", loss.item(),
+                                          (epoch-1) * len(train_loader_new) + batch_idx + previous_idx)
             for j, defect in enumerate(eq_defect):
-                config.tensorboard.add_scalar("train/defect_{}".format(j), defect.item(),
-                                              epoch * len(train_loader_new) + batch_idx)
+                config.tensorboard.add_scalar("constrained_train/defect_{}".format(j), defect.item(),
+                                              (epoch-1) * len(train_loader_new) + batch_idx + previous_idx)
             if args.dry_run:
                 break
 
@@ -200,9 +214,9 @@ def main():
     loss_on_previous = None
     for epoch in range(1, config.epochs + 1):
         # train(config, model, device, train_loader, optimizer, epoch)
-        loss_on_previous = train(config, model, device, loader_15, optimizer, epoch)
+        loss_on_previous, last_idx = train(config, model, device, loader_15, optimizer, epoch)
         # test(model, device, test_loader, epoch)
-        scheduler.step()
+        # scheduler.step()
 
     # primal_optimizer = optim.Adadelta(model.parameters(), lr=config.lr)
     # dual_optimizer = optim.SGD(model.parameters(), lr=config.lr)
@@ -211,13 +225,15 @@ def main():
     constrained_optimizer = torch_constrained.ConstrainedOptimizer(
         torch_constrained.ExtraAdagrad,
         torch_constrained.ExtraSGD,
-        lr_x=config.lr,
-        lr_y=config.lr,
+        lr_x=config.lr * 1e-3,
+        lr_y=config.lr * 1e-4,
         primal_parameters=list(model.parameters()),
     )
 
-    for epoch in range(1, config.epochs + 1):
-        train_constrained(config, model, device, loader_15, loader_6, constrained_optimizer, epoch, loss_on_previous.item())
+    for epoch in range(1, config.epochs + 1 + 10):
+        print("training constrained on epoch", epoch)
+        train_constrained(config, model, device, loader_15, loader_6,
+                          constrained_optimizer, epoch, loss_on_previous.item(), last_idx)
 
     if config.save_model:
         torch.save(model.state_dict(), "mnist_cnn.pt")
