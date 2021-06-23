@@ -20,5 +20,5 @@ experiment_buddy.register(locals())
 ################################################################
 # Derivative parameters
 ################################################################
-tensorboard = experiment_buddy.deploy(host='', sweep_yaml="")
-# tensorboard = experiment_buddy.deploy(host='mila', sweep_yaml="")
+# tensorboard = experiment_buddy.deploy(host='', sweep_yaml="")
+tensorboard = experiment_buddy.deploy(host='mila', sweep_yaml="")
