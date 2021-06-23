@@ -122,13 +122,13 @@ def train_constrained(args, model, device, train_loader_original,
         optimizer.step(closure)
 
         if batch_idx % args.log_interval == 0:
-            loss, eq_defect, _ = closure()
+            loss, eq_defect, ineq_defect = closure()
             print('Constrained Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader_new.dataset),
                        100. * batch_idx / len(train_loader_new), loss.item()))
-            print('Constrained Defect Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+            print('Constrained Ineq Defect Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader_new.dataset),
-                       100. * batch_idx / len(train_loader_new), eq_defect[0].item()))
+                       100. * batch_idx / len(train_loader_new), ineq_defect[0].item()))
 
             # print("epoch is", epoch)
             # print("length of train loader is", len(train_loader_new))
@@ -137,8 +137,8 @@ def train_constrained(args, model, device, train_loader_original,
 
             config.tensorboard.add_scalar("constrained_train/loss", loss.item(),
                                           (epoch - 1) * len(train_loader_new) + batch_idx + previous_idx)
-            for j, defect in enumerate(eq_defect):
-                config.tensorboard.add_scalar("constrained_train/defect_{}".format(j), defect.item(),
+            for j, defect in enumerate(ineq_defect):
+                config.tensorboard.add_scalar("constrained_train/ineq_defect_{}".format(j), defect.item(),
                                               (epoch - 1) * len(train_loader_new) + batch_idx + previous_idx)
             if args.dry_run:
                 break
