@@ -11,52 +11,6 @@ import numpy as np
 from torchvision import datasets
 from torch.utils.data import Dataset
 
-##################################
-# Toy Data
-##################################
-
-def gen_mog_data(n_samples, props, classes, d=2, 
-                mus=None, Ls=None, shuffle=True):
-    
-    n_gaussians = len(props)
-    
-    # Compute number of samples per class
-    n_per_class = [int(n_samples * p) for p in props[:-1]]
-    n_per_class.append(n_samples - sum(n_per_class)) # not lose samples in round
-    
-    samples = {'x': [], 'y': []}
-    
-    for gaussian_id in range(n_gaussians):
-        # Generate input data by mu + x @ sqrt(cov)
-        L = (1/d) * torch.eye(d) if (Ls is None) else Ls[gaussian_id]
-        mu = torch.randn(d) if (mus is None) else mus[gaussian_id]
-        x = mu + torch.randn(n_per_class[gaussian_id], d) @ L
-                
-        # Generate labels
-        y = torch.tensor(n_per_class[gaussian_id]*[classes[gaussian_id]])
-        
-        samples['x'].append(x)
-        samples['y'].append(y)
-    
-    x, y = torch.cat(samples['x']), torch.cat(samples['y'])
-    
-    if shuffle:
-        idx = torch.randperm(n_samples)
-        x, y = x[idx, ...], y[idx, ...]
-    
-    return {'x': x, 'y': y}
-
-def add_noisy_labels(data, prob=0.01, affected_class = 1, fake_label = 0):
-    
-    mask = data['y'] == 1
-    n_in_class = mask.sum().item()
-    
-    is_noisy = torch.rand(n_in_class) > 1 - prob   
-    data['y'][mask] = torch.LongTensor([fake_label if n else affected_class for n in is_noisy])
-    
-    return data
-    
-
 ###################################
 # Imbalanced MNIST
 ###################################
