@@ -2,13 +2,13 @@ import config
 import dataset_utils
 from classification import LitConstrainedClassifier
 
-import time
-import torch
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
+from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.loggers import WandbLogger
 
-torch.manual_seed(config.random_seed)
+seed_everything(config.random_seed)
 
 # Training
 train_data = dataset_utils.ImbalancedMNIST(
@@ -24,7 +24,7 @@ train_loader = DataLoader(
     batch_size=config.batch_size,
     shuffle=True,
     num_workers=config.num_workers,
-    pin_memory=torch.cuda.is_available()
+    pin_memory=False#torch.cuda.is_available()
 )
 
 # Validation.
@@ -44,10 +44,18 @@ val_loader = DataLoader(
     batch_size=config.val_batch_size,
     shuffle=False,
     num_workers=config.num_workers,
-    pin_memory=torch.cuda.is_available()
+    pin_memory=False#torch.cuda.is_available()
 )
 
 # Initialize Model
+constrained_kwargs=dict(
+    le_levels=config.le_levels,
+    eq_levels=config.eq_levels,
+    model_lr=config.model_lr, 
+    dual_lr=config.dual_lr,
+    log_constraints=config.log_constraints,
+)
+
 model = LitConstrainedClassifier(   
     im_dim=config.im_dim,
     im_channels=config.im_channels, 
@@ -60,6 +68,7 @@ model = LitConstrainedClassifier(
     fairness=config.fairness,
     conv_channels=config.conv_channels,
     conv_kwargs=config.conv_kwargs,
+    constrained_kwargs=constrained_kwargs,
 )
 
 # Training
@@ -71,10 +80,12 @@ early_stop = EarlyStopping(
     mode='min'
 )
 trainer = pl.Trainer(
+    #logger=config.tensorboard,
+    logger=WandbLogger(),
     max_epochs=config.max_epochs,
     auto_scale_batch_size=config.auto_scale_batch_size,
     min_epochs=config.min_epochs,
-    callbacks=[config.early_stop],
+    callbacks=[early_stop],
     checkpoint_callback=False,
     log_every_n_steps=config.log_every_n_steps, 
     flush_logs_every_n_steps=len(train_loader),
@@ -83,12 +94,10 @@ trainer = pl.Trainer(
     auto_select_gpus=True,
     )
 
-t = time.time() # Record time
 trainer.fit(
     model, 
     train_dataloader=train_loader, 
     val_dataloaders=val_loader
     )
-print("Training time:", time.time() - t)
 
 
