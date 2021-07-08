@@ -79,12 +79,12 @@ class LitConstrained(pl.LightningModule):
                 torch_constrained.ExtraSGD, 
                 lr_x=self.model_lr,
                 lr_y=self.dual_lr,
-                primal_parameters=list(self.model.parameters()),
+                primal_parameters=list(self.parameters()),
             )
         else: 
             # it is a scalar optimization problem
             optimizer = torch.optim.Adagrad(
-                self.model.parameters(), 
+                self.parameters(), 
                 lr=self.model_lr
                 )
         

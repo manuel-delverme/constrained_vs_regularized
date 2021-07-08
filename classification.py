@@ -8,69 +8,6 @@ import torch.nn.functional as F
 import torchmetrics as tm
 from torchmetrics import MetricCollection
 
-def mlp_block(in_feat, out_feat, act_fun, act_args):
-    """
-    Builds a general MLP block with batch normalization. 
-    
-    Args:
-        in_feat (scalar int): input dimension to the block.
-        out_feat (scalar int): output dimension from the block.
-        act_fun (torch.nn activation): class for the activation.
-        act_args (list): arguments for the constructor of the activation.
-
-    Returns:
-        nn.Module list: layers which comprise the block. 
-    """
-    layers = [
-        nn.Linear(in_feat, out_feat),
-        nn.BatchNorm1d(out_feat),
-        act_fun(*act_args)
-        ] 
-    return layers
-
-def conv_block(in_channels, out_channels, kernel_size, stride, 
-            pool_k_size, act_fun, act_args):
-    """
-    Builds a general Convolutional block with batch normalization for 2D inputs. 
-    
-    Args:
-        in_channels (scalar int): input channels to the block.
-        out_channels (scalar int): output channels from the block.
-        kernel_size  (scalar int): kernel size of the convolutional layer.
-        stride  (scalar int): stride of the convolutional layer.
-        pool_k_size  (scalar int): kernel size of the max pooling layer.
-        act_fun (torch.nn activation): class for the activation.
-        act_args (list): arguments for the constructor of the activation.
-
-    Returns:
-        nn.Module list: layers which comprise the block.
-    """
-    layers = [
-        nn.Conv2d(in_channels, out_channels, kernel_size, stride),
-        nn.BatchNorm2d(out_channels),
-        act_fun(*act_args),
-        nn.MaxPool2d(pool_k_size),
-        ] 
-    return layers 
-
-def get_conv_dim(in_dim, kernel_size, stride, pool_k_size):
-    """
-    Determines the output dimension of a block consisting of a convolutional 
-    layer and a max pooling layer. 
-    
-    Args:
-        in_dim (scalar int): input dimension to the block.
-        kernel_size  (scalar int): kernel size of the convolutional layer.
-        stride  (scalar int): stride of the convolutional layer.
-        pool_k_size  (scalar int): kernel size of the max pooling layer.
-
-    Returns:
-        scalar int: output dimension of the convolutional block.
-    """
-    dim_after_conv = (in_dim - kernel_size)/stride + 1
-    dim_after_pool = (int(dim_after_conv) - pool_k_size)/pool_k_size + 1 
-    return int(dim_after_pool)
-
 class LitConstrainedClassifier(LitConstrained):
     """
     Implements an image classifier under pytorch lightning with a 
@@ -79,8 +16,8 @@ class LitConstrainedClassifier(LitConstrained):
     """
     def __init__(
         self, im_dim, im_channels, hid_dims, act_fun, act_args, 
-        const_classes, classes, balanced_ERM=False, fairness=False, 
-        conv_channels = None, conv_kwargs = {},
+        const_classes, classes, kernel_size, stride, pool_k_size,
+        conv_channels = None, balanced_ERM=False, fairness=False,
         constrained_kwargs = {}
         ):
         """
@@ -115,37 +52,29 @@ class LitConstrainedClassifier(LitConstrained):
         self.const_classes = const_classes
         self.const_classes_idx = [classes.index(d) for d in const_classes]
         self.balanced_ERM = balanced_ERM
-        self.fairness = fairness
-        
-        ## Initialize classifier 
+        self.fairness = fairness        
         self.out_dim = len(classes)
         
-        modules = []
+        # Conv layers
         if conv_channels is not None:
-            # Convolutional Layers
-            in_channels = im_channels
-            current_dim = im_dim
-            for out_channels in conv_channels:
-                modules = modules + conv_block(in_channels, out_channels,
-                    act_fun=act_fun, act_args=act_args, **conv_kwargs)
-                
-                in_channels = out_channels
-                # keep track of the output dimension
-                current_dim = get_conv_dim(current_dim, **conv_kwargs)
+            conv_layers, out_channels, out_dim = utils.build_convnet(
+                im_channels, im_dim, conv_channels, kernel_size, stride,
+                pool_k_size, act_fun, act_args
+                ) 
+        else: 
+            conv_layers, out_channels, out_dim = [], im_channels, im_dim
         
         # Perceptron layers
-        modules = modules + [torch.nn.Flatten()]
+        d_in = out_channels * out_dim**2 # flat dimension
+        mlp_layers = utils.build_mlp(d_in,hid_dims,act_fun,act_args)
+        mlp_layers.append(nn.Linear(hid_dims[-1], self.out_dim))
         
-        d_in = out_channels * current_dim**2 # flat dimension
-        for h_dim in hid_dims:
-            modules = modules + mlp_block(d_in,h_dim,act_fun,act_args)
-            d_in = h_dim
-        modules.append(nn.Linear(d_in, self.out_dim))
-        self.model = nn.Sequential(*modules)
+        # Model
+        self.model = nn.Sequential(*conv_layers, *mlp_layers)
         
         # Set metrics - hardcoded. Check micro/macro flag
         self.metrics = MetricCollection([
-            tm.Accuracy(num_classes=self.out_dim, average="macro"), # Balanced
+            tm.Accuracy(num_classes=self.out_dim, average="micro"), # not Balanced
             tm.F1(num_classes=self.out_dim, average="micro"),
         ])        
     

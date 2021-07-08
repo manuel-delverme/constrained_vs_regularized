@@ -1,4 +1,4 @@
-import config
+import config_classification as config
 import dataset_utils
 from classification import LitConstrainedClassifier
 
@@ -67,7 +67,9 @@ model = LitConstrainedClassifier(
     const_classes=config.const_classes,
     fairness=config.fairness,
     conv_channels=config.conv_channels,
-    conv_kwargs=config.conv_kwargs,
+    kernel_size=config.kernel_size, 
+    stride=config.stride,
+    pool_k_size=config.pool_k_size,    
     constrained_kwargs=constrained_kwargs,
 )
 
