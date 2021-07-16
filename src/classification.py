@@ -1,12 +1,48 @@
-from torch.nn.modules.batchnorm import BatchNorm2d
-from lit_constrained import LitConstrained
-import utils
+"""
+A classifier implemented on Pytorch with Pytorch Lightning. 
+"""
+
+from src.lit_constrained import LitConstrained
+from src import nn_utils
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics as tm
 from torchmetrics import MetricCollection
+
+def get_class_dict(batch_y, classes):
+    """
+    Produces a dictionary, where the keys are the different classes samples
+    can take, and the values correspond to the indices of elements corresponding
+    to that specific class. 
+    
+    Args:
+        batch_y (1D array-like): class labels of a batch.
+        classes (list): possible values an element of batch_y can take.
+
+    Returns:
+        dictionary: contains the indices of batch_y which correspond to
+        each one of classes. 
+    """
+    return {cl:torch.where(batch_y == cl)[0] for cl in classes}
+
+def get_ordinal_labels(y, cl_idx):
+    """
+    Transforms string labels into ordinal labels.
+    
+    Args:
+        y (1D array-like): labels
+        cl_idx (list of indices): indices present in position i of this
+        list are converted into ordinal element "i".
+
+    Returns:
+        list: [description]
+    """
+    y = torch.zeros_like(y)
+    for i,idx in enumerate(cl_idx):
+        y[idx] = i
+    return y
 
 class LitConstrainedClassifier(LitConstrained):
     """
@@ -24,7 +60,7 @@ class LitConstrainedClassifier(LitConstrained):
         Initializes the model given its architecture. 
         
         Args:
-            im_dim (scalar int): fixed dimension of input images.
+            im_dim (scalar int): dimension of input images.
             im_channels (scalar int): number of image channels.
             hid_dims (int list): hidden dimensions of the MLP classifier. 
             act_fun (torch.nn activation): class for the activation.
@@ -39,9 +75,11 @@ class LitConstrainedClassifier(LitConstrained):
                 close to the ERM of the remaining classes. Otherwise, losses 
                 are bounded to be below a threshold. Defaults to False, the latter.
             conv_channels (list, optional): channels for the convolutional 
-                layers of the network. Defaults to None, an MLP is constructed.
-            conv_kwargs (dict, optional): argumentd shared across convolutional
-                layers. See function conv_block. Defaults to {}.
+                layers of the network. Defaults to None.
+            kernel_size  (scalar int): kernel size of convolutional layers.
+            stride  (scalar int): stride of convolutional layers.
+            pool_k_size  (scalar int, optional): kernel size of max pooling layers.
+                If not provided, no max pooling layer is included.
             constrained_kwargs (dict, optional): arguments for the initialization
                 of the LitConstrained class. Defaults to {}, where a single 
                 objective optimization problem is considered during training.
@@ -55,21 +93,27 @@ class LitConstrainedClassifier(LitConstrained):
         self.fairness = fairness        
         self.out_dim = len(classes)
         
-        # Conv layers
+        # -------------------------------------- Conv layers
         if conv_channels is not None:
-            conv_layers, out_channels, out_dim = utils.build_convnet(
+            conv_layers, out_channels, out_dim, _ = nn_utils.build_convnet(
                 im_channels, im_dim, conv_channels, kernel_size, stride,
                 pool_k_size, act_fun, act_args
                 ) 
         else: 
             conv_layers, out_channels, out_dim = [], im_channels, im_dim
         
-        # Perceptron layers
+        conv_layers.append(nn.Flatten())
+        # -------------------------------------- Perceptron layers
         d_in = out_channels * out_dim**2 # flat dimension
-        mlp_layers = utils.build_mlp(d_in,hid_dims,act_fun,act_args)
-        mlp_layers.append(nn.Linear(hid_dims[-1], self.out_dim))
         
-        # Model
+        if hid_dims is not None:
+            mlp_layers = nn_utils.build_mlp(d_in,hid_dims,act_fun,act_args)
+            last_dim = hid_dims[-1]
+        else:
+            mlp_layers = []
+            last_dim = d_in
+        
+        mlp_layers.append(nn.Linear(last_dim, self.out_dim))
         self.model = nn.Sequential(*conv_layers, *mlp_layers)
         
         # Set metrics - hardcoded. Check micro/macro flag
@@ -108,8 +152,8 @@ class LitConstrainedClassifier(LitConstrained):
         preds = self(x)
         
         # Indices of batch belonging to each class
-        class_dict = utils.get_class_dict(y, self.classes) # inefficient
-        labels = utils.get_ordinal_labels(y,class_dict)
+        class_dict = get_class_dict(y, self.classes) # inefficient
+        labels = get_ordinal_labels(y,class_dict)
         
         loc = []
         loss = 0
@@ -139,7 +183,7 @@ class LitConstrainedClassifier(LitConstrained):
                 loss_other_cl = loss - loc[i] # Weighting?
                 loc[i] = torch.abs(loc - loss_other_cl)
         
-        return loss, loc, None
+        return loss, None, loc
         
     def log_metrics(self, batch):
         """
@@ -150,8 +194,8 @@ class LitConstrainedClassifier(LitConstrained):
         # Forward
         logits = F.softmax(self(x), dim=1)
         # map y to range(output_dim)
-        class_dict = utils.get_class_dict(y, self.classes)
-        labels = utils.get_ordinal_labels(y,class_dict)
+        class_dict = get_class_dict(y, self.classes)
+        labels = get_ordinal_labels(y,class_dict)
         
         metric_dict = self.metrics(logits, labels)
-        self.log_dict(metric_dict, on_epoch=True)
+        self.log_dict(metric_dict, on_epoch=True, on_step=False)

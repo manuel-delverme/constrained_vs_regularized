@@ -1,6 +1,6 @@
-import config_betavae as config
+import configs.config_fairness as config
+from src.classification import LitConstrainedClassifier
 import dataset_utils
-from beta_vae import BetaVAE
 
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
@@ -11,37 +11,36 @@ from pytorch_lightning.loggers import WandbLogger
 seed_everything(config.random_seed)
 
 # Training
-train_data = dataset_utils.ImbalancedMNIST(
-    props=config.props, 
-    digits=config.digits, 
+train_data = dataset_utils.ImbalancedDataset(
+    dataset_class=config.dataset_class, 
+    classes=config.classes, 
     transform=config.transform, 
+    props=config.props, 
     train=True, 
     download=True, 
-    root='./data'
-)
+    root='./data',
+    )
 train_loader = DataLoader(
     dataset=train_data,
-    batch_size=config.batch_size,
-    shuffle=True,
+    #batch_size=config.batch_size,
+    batch_size=len(train_data),
     num_workers=config.num_workers,
-    pin_memory=False#torch.cuda.is_available()
+    pin_memory=False, #torch.cuda.is_available()
 )
 
 # Validation.
-d = config.digits
-val_props = [1/len(d) for i in range(len(d))] # perfectly balanced
-
-val_data = dataset_utils.ImbalancedMNIST(
-    props=val_props,
-    digits=config.digits, 
+val_data = dataset_utils.ImbalancedDataset(
+    dataset_class=config.dataset_class, 
+    classes=config.classes, 
     transform=config.transform, 
+    props=None, 
     train=False, 
     download=True, 
-    root='./data'
+    root='./data',
 )
 val_loader = DataLoader(
     dataset=val_data,
-    batch_size=config.val_batch_size,
+    batch_size=len(val_data),
     shuffle=False,
     num_workers=config.num_workers,
     pin_memory=False#torch.cuda.is_available()
@@ -49,6 +48,7 @@ val_loader = DataLoader(
 
 # Initialize Model
 constrained_kwargs=dict(
+    optimizer_class=config.optimizer_class,
     le_levels=config.le_levels,
     eq_levels=config.eq_levels,
     model_lr=config.model_lr, 
@@ -56,34 +56,38 @@ constrained_kwargs=dict(
     log_constraints=config.log_constraints,
 )
 
-model = BetaVAE(   
+model = LitConstrainedClassifier(   
     im_dim=config.im_dim,
-    im_channels=config.im_channels,
+    im_channels=config.im_channels, 
+    classes=config.classes,
     hid_dims=config.hid_dims,
-    latent_dim=config.latent_dim,
     act_fun=config.act_fun,
     act_args=config.act_args,
+    balanced_ERM=config.balanced_ERM,
+    const_classes=config.const_classes,
+    fairness=config.fairness,
     conv_channels=config.conv_channels,
     kernel_size=config.kernel_size, 
     stride=config.stride,
     pool_k_size=config.pool_k_size,    
-    beta=config.beta,
     constrained_kwargs=constrained_kwargs,
 )
 
 # Training
 early_stop = EarlyStopping(
-    monitor='aug_lag',
+    monitor='Lagrangian',
     min_delta=config.stop_delta,
     patience=config.stop_patience,
     verbose=False,
-    mode='min'
+    mode='min',
+    strict=True,
 )
+
 trainer = pl.Trainer(
     #logger=config.tensorboard,
     logger=WandbLogger(),
     max_epochs=config.max_epochs,
-    auto_scale_batch_size=config.auto_scale_batch_size,
+    #auto_scale_batch_size=config.auto_scale_batch_size,
     min_epochs=config.min_epochs,
     callbacks=[early_stop],
     checkpoint_callback=False,
@@ -97,7 +101,5 @@ trainer = pl.Trainer(
 trainer.fit(
     model, 
     train_dataloader=train_loader, 
-    val_dataloaders=val_loader
+    #val_dataloaders=val_loader # for early stopping
     )
-
-
