@@ -5,23 +5,28 @@ import torch
 import pytorch_lightning as pl
 #from torch.optim.lr_scheduler import StepLR
 
+"""
 def safe_log10(x):
     return torch.log10(x + 1e-10)
 
 def safe_log(x):
     return torch.log(x + 1e-10)
-
-def tensor2dict(tensor, tensor_name):
+"""
+def tensor2dict(tensor, const_names=None):
     # Converts 1d tensor to dictionary. Used for logging
-    return {tensor_name + '_' + str(i+1): val for i,val in enumerate(tensor)}
+    if const_names is None:
+        const_names = ["aux_objective" + str(i+1) for i,_ in enumerate(tensor)]
+    return {"log_" + name: val for name,val in zip(const_names,tensor)}
 
 def multipliers2dict(mult_list, mult_name):
     # Converts 1d tensor to dictionary. Used for logging
-    return {mult_name + '_' + str(i+1): val.weight for i,val in enumerate(mult_list)}
+    values = {mult_name + '_' + str(i+1): val.weight for i,val in enumerate(mult_list)}
+    grads = {mult_name + '_grad_' + str(i+1): - val.weight.grad for i,val in enumerate(mult_list)}
+    return {**values, **grads} 
 
-def reduce_fx(tensor):
-    # Produces the mean of a tensor, ignoring zero-valued elements and nans
-    #tensor = tensor[tensor>0]
+def log_reduce(tensor):
+    # Produces the mean of a logs of tensor, ignoring zero-valued elements and nans
+    tensor = tensor[tensor>0]
     tensor = tensor.detach().cpu().numpy()
     return np.nanmean(tensor)
 
@@ -32,15 +37,25 @@ class LitConstrained(pl.LightningModule):
     """
     def __init__(
         self, optimizer_class, optimizer_kwargs={}, le_levels=None, eq_levels=None, 
-        model_lr=1e-3, dual_lr=0., gamma=1, log_constraints=False, metrics = False):
+        le_names=None, eq_names=None, model_lr=1e-3, dual_lr=0., gamma=1,
+        log_constraints=False, metrics = False):
         """
         Args:
+            optimizer_class (torch optimizer): an optimizer class for the model's
+                parameters. If constraints are provided, the optimizer must have
+                an extrapolation method. 
+            optimizer_kwargs (dict, optional): keyword arguments for the initialization.
+                of the optimizer. Defaults to {}.
             le_levels (float list, optional): Levels for less or equal 
                 constraints on the different objectives. Defaults to None,
                 where no le constraint is considered.
             eq_levels (float list, optional): Levels for equality 
                 constraints on the different objectives. Defaults to None,
                 where no le constraint is considered.
+            le_names (str list, optional): names for the different constraints. 
+                By default, generic names are generated.
+            eq_names (str list, optional): names for the different constraints. 
+                By default, generic names are generated.
             model_lr (float, optional): learning rate for the model's
                 parameters. Defaults to 1e-3.
             dual_lr (float, optional): learning rate for the dual
@@ -66,10 +81,10 @@ class LitConstrained(pl.LightningModule):
         #self.le_damp = le_damp
         
         # Constraints
-        if le_levels is not None: self.le_levels = torch.tensor(le_levels)
-        else: self.le_levels = None        
-        if eq_levels is not None: self.eq_levels = torch.tensor(eq_levels)
-        else: self.eq_levels = None
+        self.le_levels = None if le_levels is None else torch.tensor(le_levels)
+        self.le_names = None if le_names is None else le_names
+        self.eq_levels = None if eq_levels is None else torch.tensor(eq_levels)
+        self.eq_names = None if eq_names is None else eq_names
         
         # Are we solving a constrained optimization problem?
         self.is_constrained = le_levels is not None or eq_levels is not None
@@ -174,7 +189,7 @@ class LitConstrained(pl.LightningModule):
             # Only primal params are optimized, on a vanilla Pytorch way.
             self.optimizers().zero_grad()
             loss, _, _ = closure() # constrained objectives are irrelevant
-            loss.backward()
+            loss.backward() 
             self.optimizers().step()
             lagrangian = loss
         
@@ -224,19 +239,18 @@ class LitConstrained(pl.LightningModule):
             self.log_metrics(batch)
         
         self.log_dict({"Lagrangian": aug_lag}, prog_bar=True)
-        self.log_dict({"log_loss": safe_log10(loss)}, prog_bar=True)
+        self.log_dict({"ERM": loss}, prog_bar=True)
         
         if self.log_constraints:
             if self.is_constrained:
                 nus = self.optimizers().equality_multipliers
                 if len(nus)>0: self.log_dict(multipliers2dict(nus, "nu"))
-            if eq_vals is not None:
-                self.log_dict(tensor2dict(eq_vals, "eq"), prog_bar=True, reduce_fx = reduce_fx)
-            if self.is_constrained:
                 lambdas = self.optimizers().inequality_multipliers
                 if len(lambdas)>0: self.log_dict(multipliers2dict(lambdas, "lambda"))
+            if eq_vals is not None:
+                self.log_dict(tensor2dict(eq_vals, self.eq_names), prog_bar=True, reduce_fx=log_reduce)
             if le_vals is not None:
-                self.log_dict(tensor2dict(le_vals, "le"), prog_bar=True, reduce_fx = reduce_fx)
+                self.log_dict(tensor2dict(le_vals, self.le_names), prog_bar=True, reduce_fx=log_reduce)
     
     def get_const_levels(self, loader, loss_type, loss_idx, epochs, 
                         optimizer_class, optimizer_kwargs):

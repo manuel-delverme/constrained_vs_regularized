@@ -28,6 +28,7 @@ train_loader = DataLoader(
     pin_memory=False, #torch.cuda.is_available()
 )
 
+"""
 # Validation.
 val_data = dataset_utils.ImbalancedDataset(
     dataset_class=config.dataset_class, 
@@ -45,12 +46,14 @@ val_loader = DataLoader(
     num_workers=config.num_workers,
     pin_memory=False#torch.cuda.is_available()
 )
-
+"""
 # Initialize Model
 constrained_kwargs=dict(
     optimizer_class=config.optimizer_class,
     le_levels=config.le_levels,
     eq_levels=config.eq_levels,
+    le_names=config.le_names,
+    eq_names=config.eq_names,
     model_lr=config.model_lr, 
     dual_lr=config.dual_lr,
     log_constraints=config.log_constraints,
@@ -87,7 +90,7 @@ trainer = pl.Trainer(
     #logger=config.tensorboard,
     logger=WandbLogger(),
     max_epochs=config.max_epochs,
-    #auto_scale_batch_size=config.auto_scale_batch_size,
+    auto_scale_batch_size=config.auto_scale_batch_size,
     min_epochs=config.min_epochs,
     callbacks=[early_stop],
     checkpoint_callback=False,
