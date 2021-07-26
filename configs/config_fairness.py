@@ -13,9 +13,10 @@ dataset_class = datasets.MNIST
 
 classes = [0,1,7,9]
 props = [0.33,0.01,0.33,0.33]
+size = None
 
 # Image details and DataLoader
-im_dim=28   
+im_dim=28
 im_channels=1
 transform=transforms.Compose([
         transforms.ToTensor(),
@@ -23,7 +24,7 @@ transform=transforms.Compose([
         ])
 batch_size = 256
 #val_batch_size = 1000
-num_workers = 1
+num_workers = 0
 
 # ------------------------------------------------------ Application
 
@@ -45,23 +46,23 @@ const_classes = [1]
 
 # --------------------------------------------------- torch constrained
 # Constrained optimizer
-le_levels = [0.1]
-le_names = ["CE_loss on class 1"]
 eq_levels = None
 eq_names = None
+le_levels = [0.1]
+le_names = ["CE_loss on class 1"]
 model_lr = 1e-3
 dual_lr = 1e-1
-log_constraints = True 
+log_constraints = True
 optimizer_class = torch_constrained.ExtraAdam
 
 #----------------------------------------------------- training
 stop_delta = 1
 stop_patience = 2
 
-max_epochs = 30
+max_epochs = 200
 auto_scale_batch_size = False
 min_epochs = 10
-log_every_n_steps = 1 
+log_every_n_steps = 1
 log_gpu_memory = False
 gpus = -1 # set to 0 if cpu use is prefered,
 
