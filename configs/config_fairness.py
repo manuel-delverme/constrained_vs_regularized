@@ -3,41 +3,43 @@ import torch_constrained
 
 import torch
 from torchvision import transforms, datasets
-from torch import nn
+import torchmetrics as tm
+from torchmetrics import MetricCollection
 
-random_seed = 1111
+random_seed = 5
+torch.cuda.is_available()
 
 # -------------------------------------------------------- Data
 # Dataset
 dataset_class = datasets.MNIST
 
-classes = [0,1,7,9]
+classes = [0,1,2,3]
 props = [0.33,0.01,0.33,0.33]
 size = None
 
 # Image details and DataLoader
-im_dim=28
-im_channels=1
+im_dim = 28
+im_channels = 1
 transform=transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
+        #transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)), # CIFAR10
+        transforms.Normalize((0.1307,), (0.3081,)), # MNIST
         ])
-batch_size = 256
-#val_batch_size = 1000
+batch_size = None
 num_workers = 0
 
 # ------------------------------------------------------ Application
 
 # MLP layers
-hid_dims = [128,16]
-act_fun = nn.ReLU
+hid_dims = None
+act_fun = None
 act_args = []
 
 # Conv layers
 conv_channels = None
-kernel_size = 3
-stride = 1
-pool_k_size = 2
+kernel_size = None
+stride = None
+pool_k_size = None
 
 # Objective function and constraints
 balanced_ERM = False
@@ -48,24 +50,34 @@ const_classes = [1]
 # Constrained optimizer
 eq_levels = None
 eq_names = None
-le_levels = [0.1]
-le_names = ["CE_loss on class 1"]
+le_levels = None
+le_names = ["CE_class_1"]
 model_lr = 1e-3
-dual_lr = 1e-1
+dual_lr = 1e-2
 log_constraints = True
-optimizer_class = torch_constrained.ExtraAdam
+optimizer_class = torch.optim.Adam
 
 #----------------------------------------------------- training
-stop_delta = 1
-stop_patience = 2
+stop_delta = 1e-6
+stop_patience = 15
 
-max_epochs = 200
+max_epochs = 1000
 auto_scale_batch_size = False
 min_epochs = 10
 log_every_n_steps = 1
 log_gpu_memory = False
-gpus = -1 # set to 0 if cpu use is prefered,
+device = "cuda"
+
+# -------------------------------------------------- Metrics
+metrics = MetricCollection({
+        "metrics/accuracy": tm.Accuracy(num_classes=len(classes), average="micro"), # not balanced
+        "metrics/balanced_accuracy": tm.Accuracy(num_classes=len(classes), average="macro"), # balanced
+        "metrics/accuracy_per_class": tm.Accuracy(num_classes=len(classes), average="none"), # per class
+})
+# Imbalanced metric + None
 
 # Experiment Buddy
 experiment_buddy.register(locals())
-tensorboard = experiment_buddy.deploy() # sweep_yaml = ""
+tensorboard = experiment_buddy.deploy()
+# sweep_yaml = "" # for cluster sweeps
+# wandb_kwargs={"group": "GPU usage"} # for group runs

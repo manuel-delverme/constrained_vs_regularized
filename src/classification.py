@@ -8,24 +8,6 @@ from src import nn_utils
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchmetrics as tm
-from torchmetrics import MetricCollection
-
-def get_class_dict(batch_y, classes):
-    """
-    Produces a dictionary, where the keys are the different classes samples
-    can take, and the values correspond to the indices of elements corresponding
-    to that specific class.
-
-    Args:
-        batch_y (1D array-like): class labels of a batch.
-        classes (list): possible values an element of batch_y can take.
-
-    Returns:
-        dictionary: contains the indices of batch_y which correspond to
-        each one of classes.
-    """
-    return {cl:torch.where(batch_y == cl)[0] for cl in classes}
 
 def get_ordinal_labels(y, cl_idx):
     """
@@ -40,7 +22,7 @@ def get_ordinal_labels(y, cl_idx):
         list: [description]
     """
     y = torch.zeros_like(y)
-    for i,idx in enumerate(cl_idx):
+    for i, idx in enumerate(cl_idx.values()):
         y[idx] = i
     return y
 
@@ -116,12 +98,6 @@ class LitConstrainedClassifier(LitConstrainedModel):
         mlp_layers.append(nn.Linear(last_dim, self.out_dim))
         self.model = nn.Sequential(*conv_layers, *mlp_layers)
 
-        # Set metrics - hardcoded. Check micro/macro flag
-        self.metrics = MetricCollection([
-            tm.Accuracy(num_classes=self.out_dim, average="micro"), # not Balanced
-            tm.F1(num_classes=self.out_dim, average="micro"),
-        ])
-
     def forward(self, input):
         """
         Produce the scores for every class (before softmax).
@@ -152,7 +128,7 @@ class LitConstrainedClassifier(LitConstrainedModel):
         preds = self(x)
 
         # Indices of batch belonging to each class
-        class_dict = get_class_dict(y, self.classes) # inefficient
+        class_dict = {cl: torch.where(y == cl)[0] for cl in self.classes} # inefficient
         labels = get_ordinal_labels(y,class_dict)
 
         loc = []
@@ -164,10 +140,10 @@ class LitConstrainedClassifier(LitConstrainedModel):
             # y is mapped from class to range(self.out_dim)
             class_loss = F.cross_entropy(preds[cl_idx], labels[cl_idx])
 
-            if torch.isnan(class_loss):
+            """if torch.isnan(class_loss):
                 # If no data was available, do not estimate the loss
-                class_loss = torch.tensor(0.).to(self.device)
-
+                class_loss = class_loss.to(self.device)
+            """
             loc.append(class_loss)
 
             # Agreggated loss
@@ -185,17 +161,25 @@ class LitConstrainedClassifier(LitConstrainedModel):
 
         return loss, None, loc
 
-    def log_metrics(self, batch):
+    def log_metrics(self, batch, train):
         """
         Logs a selection of metrics estimated from the model state for the
         given batch.
         """
+        if self.metrics is None:
+            return None
+
         x, y = batch
         # Forward
         logits = F.softmax(self(x), dim=1)
         # map y to range(output_dim)
-        class_dict = get_class_dict(y, self.classes)
-        labels = get_ordinal_labels(y,class_dict)
+        class_dict = {cl: torch.where(y == cl)[0] for cl in self.classes}
+        labels = get_ordinal_labels(y, class_dict)
+        #print({str(l): sum(labels==l) for l in torch.unique(labels)})
 
-        metric_dict = self.metrics(logits, labels)
+        eval_metrics = self.train_metrics if train else self.valid_metrics
+        prefix = "train/" if train else "val/"
+        metric_dict = eval_metrics(logits, labels)
+        accuracies_per_class = metric_dict.pop(prefix + "metrics/accuracy_per_class") # JC Todo: clean uṕ
+        self.log_dict({prefix+"metrics/accuracy_cl_"+str(i): a for i,a in enumerate(accuracies_per_class)}, on_epoch=True, on_step=False)
         self.log_dict(metric_dict, on_epoch=True, on_step=False)

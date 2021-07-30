@@ -5,24 +5,30 @@ import torch
 import pytorch_lightning as pl
 #from torch.optim.lr_scheduler import StepLR
 
-def tensor2dict(tensor, const_names=None):
+def tensor2dict(tensor, prefix, const_names=None):
     # Converts 1d tensor to dictionary. Used for logging
     if const_names is None:
         const_names = ["aux_objective" + str(i+1) for i,_ in enumerate(tensor)]
-    return {name: val for name,val in zip(const_names,tensor)}
+    return {prefix + name: val for name,val in zip(const_names,tensor)}
 
 def multipliers2dict(mult_list, mult_name):
-    # Converts 1d tensor to dictionary. Used for logging
-    values = {mult_name + '_' + str(i+1): val.weight for i,val in enumerate(mult_list)}
+    # Converts 1d tensor to dictionary. Used for logging.
+    # JC ToDo: remove -1 parameter from forward call
+    values = {mult_name + '_' + str(i+1): val.forward(-1) for i,val in enumerate(mult_list)}
     grads = {mult_name + '_grad_' + str(i+1): - val.weight.grad for i,val in enumerate(mult_list)}
     return {**values, **grads}
 
-def reduce(tensor):
-    # Produces the mean of a logs of tensor, ignoring zero-valued elements and nans
-    tensor = tensor[tensor>0]
-    tensor = tensor.detach().cpu().numpy()
-    return np.nanmean(tensor)
+def success2dict(tensor, levels, prefix, const_names=None):
+    success = [float(t<l) for t, l in zip(tensor.detach(), levels)]
+    if const_names is None:
+        const_names = ["const_" + str(i+1) for i,_ in enumerate(tensor)]
+    return {prefix + "success_" + name: val for name,val in zip(const_names,success)}
 
+def reduce(tensor):
+    # Produces the mean of a logs of tensor, ignoring nans.
+    #tensor = tensor[tensor>0] # JC ToDo: remvoe
+    tensor = tensor.detach()
+    return np.nanmean(tensor)
 class LitConstrainedModel(pl.LightningModule):
     """
     This class implements a pytorch lightning module with the possibility
@@ -31,7 +37,7 @@ class LitConstrainedModel(pl.LightningModule):
     def __init__(
         self, optimizer_class, optimizer_kwargs={}, le_levels=None, eq_levels=None,
         le_names=None, eq_names=None, model_lr=1e-3, dual_lr=0., gamma=1,
-        log_constraints=False, metrics = False):
+        log_constraints=False, metrics = None):
         """
         Args:
             optimizer_class (torch optimizer): an optimizer class for the model's
@@ -76,6 +82,8 @@ class LitConstrainedModel(pl.LightningModule):
         # Constraints
         self.le_levels = None if le_levels is None else torch.tensor(le_levels)
         self.le_names = None if le_names is None else le_names
+
+        # JC ToDo: add slack values for equality constraints
         self.eq_levels = None if eq_levels is None else torch.tensor(eq_levels)
         self.eq_names = None if eq_names is None else eq_names
 
@@ -84,7 +92,10 @@ class LitConstrainedModel(pl.LightningModule):
 
         # Logging
         self.log_constraints = log_constraints
-        self.metrics = metrics
+        self.metrics = None if metrics is None else -1 # JC ToDo: rename to do_metrics boolean.
+        if self.metrics is not None:
+            self.train_metrics = metrics.clone(prefix='train/')
+            self.valid_metrics = metrics.clone(prefix='val/')
 
         # The optimizer is mostly hard coded
         self.gamma = gamma # lr scheduling
@@ -132,8 +143,10 @@ class LitConstrainedModel(pl.LightningModule):
             1D tensor: feasibility gaps of the constraints
         """
         levels = self.le_levels if const_type == "inequality" else self.eq_levels
-        gaps = vals - levels.to(self.device)
-        gaps = [gaps.reshape(1, -1), ] # format for optimizer. Necessary?
+        if levels is not None:
+            gaps = vals - levels.to(self.device)
+            gaps = [gaps.reshape(1, -1), ] # format for optimizer. Necessary?
+        else: gaps = None
         return gaps
 
     def training_step(self, batch, batch_idx):
@@ -158,8 +171,8 @@ class LitConstrainedModel(pl.LightningModule):
                     equalities and those constrained with inequalities.
                 """
                 loss, eq_vals, le_vals = self.eval_losses(batch)
-                eq_gaps = self.eval_gaps(eq_vals, "equality") if self.eq_levels is not None else None
-                le_gaps = self.eval_gaps(le_vals, "inequality") if self.le_levels is not None else None
+                eq_gaps = self.eval_gaps(eq_vals, "equality")
+                le_gaps = self.eval_gaps(le_vals, "inequality")
                 return loss, eq_gaps, le_gaps
 
             # JC ToDo: self.optimizers() can return a list.
@@ -170,9 +183,11 @@ class LitConstrainedModel(pl.LightningModule):
             self.optimizers().optimizer.zero_grad() #JC ToDo
             loss.backward()
             self.optimizers().optimizer.step() # JC ToDo
-            lagrangian = loss
+            lagrangian = None
 
-        self.log_paths(lagrangian, loss, eq_vals, le_vals, batch)
+        self.log_paths(lagrangian, loss, eq_vals, le_vals, train=True)
+        self.log_metrics(batch, train=True) # requires yet another forward
+
 
     def validation_step(self, batch, batch_idx):
         """
@@ -188,19 +203,19 @@ class LitConstrainedModel(pl.LightningModule):
         """
         # Losses
         loss, eq_vals, le_vals = self.eval_losses(batch)
-        eq_gaps = self.eval_gaps(eq_vals, "equality") if eq_vals is not None else None
-        le_gaps = self.eval_gaps(le_vals, "inequality") if le_vals is not None else None
+        eq_gaps = self.eval_gaps(eq_vals, "equality")
+        le_gaps = self.eval_gaps(le_vals, "inequality")
 
         # Lagrangian
         if self.is_constrained:
             constraints = self.optimizers().optimizer.weighted_constraint(eq_gaps, le_gaps) #JC ToDo
             lagrangian = loss + sum(constraints)
-        else:
-            lagrangian = loss # there is no lagrangian
+        else: lagrangian = None
 
-        self.log_paths(lagrangian, loss, eq_vals, le_vals, batch)
+        self.log_paths(lagrangian, loss, eq_vals, le_vals, train=False)
+        self.log_metrics(batch, train=False) # requires yet another forward
 
-    def log_paths(self, aug_lag, loss, eq_vals, le_vals, batch):
+    def log_paths(self, lagrangian, loss, eq_vals, le_vals, train):
         """
         Logs various values relevant to the torch_constrained framework:
         the values of the main objective, constrained objectives, dual
@@ -213,24 +228,29 @@ class LitConstrainedModel(pl.LightningModule):
                 with less or equal constraints.
             eq_vals (1D tensor): the evaluated values of objectives associated
                 with equality constraints.
-            batch (4D tensor): a data batch for metric evaluation.
         """
-        if self.metrics is not None:
-            self.log_metrics(batch)
+        prefix = "train/" if train else "val/"
 
-        self.log_dict({"Lagrangian": aug_lag}, prog_bar=True)
-        self.log_dict({"ERM": loss}, prog_bar=True)
+        if lagrangian is not None:
+            self.log_dict({prefix + "Lagrangian": lagrangian}, prog_bar=True)
+        self.log_dict({prefix + "ERM": loss}, prog_bar=True)
 
         if self.log_constraints:
-            if self.is_constrained:
+            if train and self.is_constrained:
+                # Equality multipliers
                 nus = self.optimizers().optimizer.equality_multipliers #JC ToDo
-                if len(nus)>0: self.log_dict(multipliers2dict(nus, "nu"))
+                if len(nus)>0: self.log_dict(multipliers2dict(nus, prefix + "nu"))
+                # Inequality multipliers
                 lambdas = self.optimizers().optimizer.inequality_multipliers # JC ToDo
-                if len(lambdas)>0: self.log_dict(multipliers2dict(lambdas, "lambda"))
+                if len(lambdas)>0: self.log_dict(multipliers2dict(lambdas, prefix + "lambda"))
+                # Success of each constraint
+            if self.is_constrained:
+                # JC ToDo: add constraint satisfaction metric for equality.
+                self.log_dict(success2dict(le_vals, self.le_levels, prefix, self.le_names), reduce_fx=reduce)
             if eq_vals is not None:
-                self.log_dict(tensor2dict(eq_vals, self.eq_names), prog_bar=True, reduce_fx=reduce)
+                self.log_dict(tensor2dict(eq_vals, prefix, self.eq_names), prog_bar=True, reduce_fx=reduce)
             if le_vals is not None:
-                self.log_dict(tensor2dict(le_vals, self.le_names), prog_bar=True, reduce_fx=reduce)
+                self.log_dict(tensor2dict(le_vals, prefix, self.le_names), prog_bar=True, reduce_fx=reduce)
 
     def get_const_levels(self, loader, loss_type, loss_idx, epochs,
                         optimizer_class, optimizer_kwargs):
@@ -302,11 +322,12 @@ class LitConstrainedModel(pl.LightningModule):
         """
         raise NotImplementedError
 
-    def log_metrics(self, batch):
+    def log_metrics(self, batch, train):
         """
         Logs some desired performance metrics. This is application specific
         and must be implemented by the user. This function is optional.
         Args:
             batch (tensor or structure of tensors): a batch.
+            train (bool): whether the provided batch comes from train or validation data.
         """
         raise NotImplementedError

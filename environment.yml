@@ -1,14 +1,33 @@
 name: torch-constrained-testing
 
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
 dependencies:
-  - python=3.8
-  - pip=21
+  - python>=3.8
+  - pip>=20
+  - numpy>=1.20
+
+  # GPU dependencies https://towardsdatascience.com/managing-cuda-dependencies-with-conda-89c5d817e7e1
+  - cudatoolkit>=10.2, < 11
+  - cudnn=7.6
+  - gcc_linux-64
+  - gxx_linux-64
+  - nvcc_linux-64>=10.2, < 11 # configures environment to be "cuda-aware"
+  #- cupti=10.1
+  #- mpi4py=3.0 # installs cuda-aware openmpi
+  #- nccl=2.5
+  #- nodejs=13
+
+  # Pytorch dependencies
+  - pytorch>=1.8
+  - torchvision>=0.10
+  - pytorch-lightning=1.3.8
+  - torchmetrics>=0.4
+
   - pip:
     - torch_constrained==0.0.16
-    - torchmetrics==0.4.1
-    - numpy==1.19.2
-    - pytorch_lightning==1.3.8
-    - torchvision==0.10.0
-    - torch==1.9.0
     - wandb==0.11
     - git+https://github.com/ministry-of-silly-code/experiment_buddy.git#egg=experiment_buddy

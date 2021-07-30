@@ -18,7 +18,7 @@ class ImbalancedDataset(Dataset):
     """
     Implements a torchvision dataset, possibly imbalanced.
     """
-    def __init__(self, dataset_class, classes, transform, size=None, props=None,
+    def __init__(self, dataset_class, classes, transform, device, size=None, props=None,
                 train=True, download=True, root='./data'):
         """
         Load the dataset and subsample it so that only contains samples from the
@@ -57,6 +57,7 @@ class ImbalancedDataset(Dataset):
 
         # Resample the dataset
         self.dataset = self.imbal_resample()
+        #self.dataset = self.dataset[self.dataset.indices]
 
     def imbal_resample(self):
         """
@@ -65,9 +66,7 @@ class ImbalancedDataset(Dataset):
         Returns:
             torch Dataset: a subsampled dataset.
         """
-
-        aux_labels = self.dataset.train_labels if self.train else self.dataset.test_labels
-        labels, cl_counts = get_labels_and_class_counts(aux_labels)
+        labels, cl_counts = get_labels_and_class_counts(self.dataset.targets)
         # Ignore counts for elements which are not in classes.
         cl_counts = cl_counts[self.classes]
 

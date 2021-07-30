@@ -2,6 +2,7 @@ import configs.config_fairness as config
 from src.classification import LitConstrainedClassifier
 import dataset_utils
 
+import torch
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning import seed_everything
@@ -15,26 +16,34 @@ train_data = dataset_utils.ImbalancedDataset(
     dataset_class=config.dataset_class,
     classes=config.classes,
     transform=config.transform,
+    device=config.device,
     props=config.props,
     size=config.size,
     train=True,
     download=True,
     root='./data',
     )
+
+b_size = config.batch_size if config.batch_size is not None else len(train_data)
 train_loader = DataLoader(
     dataset=train_data,
-    #batch_size=config.batch_size,
-    batch_size=len(train_data),
+    batch_size=b_size,
+    shuffle=False,
     num_workers=config.num_workers,
-    pin_memory=False, #torch.cuda.is_available()
+    pin_memory=False#torch.cuda.is_available() # introduces weird warnings
 )
 
-"""
+# JC ToDo: clean
+import numpy as np
+for img, lab in train_loader:
+    print({str(i): sum(lab==i) for i in np.unique(lab)})
+
 # Validation.
 val_data = dataset_utils.ImbalancedDataset(
     dataset_class=config.dataset_class,
     classes=config.classes,
     transform=config.transform,
+    device=config.device,
     props=None,
     train=False,
     download=True,
@@ -47,7 +56,7 @@ val_loader = DataLoader(
     num_workers=config.num_workers,
     pin_memory=False#torch.cuda.is_available()
 )
-"""
+
 # Initialize Model
 constrained_kwargs=dict(
     optimizer_class=config.optimizer_class,
@@ -58,6 +67,7 @@ constrained_kwargs=dict(
     model_lr=config.model_lr,
     dual_lr=config.dual_lr,
     log_constraints=config.log_constraints,
+    metrics=config.metrics,
 )
 
 model = LitConstrainedClassifier(
@@ -77,9 +87,14 @@ model = LitConstrainedClassifier(
     constrained_kwargs=constrained_kwargs,
 )
 
+print(model)
+
 # Training
+# JC ToDo: clean the early stop
+is_constrained = config.le_levels is not None or config.eq_levels is not None
+to_monitor = 'val/lagrangian' if is_constrained else "val/ERM"
 early_stop = EarlyStopping(
-    monitor='Lagrangian',
+    monitor=to_monitor,
     min_delta=config.stop_delta,
     patience=config.stop_patience,
     verbose=False,
@@ -87,23 +102,26 @@ early_stop = EarlyStopping(
     strict=True,
 )
 
+gpus = -1 if config.device == "cuda" else 0
 trainer = pl.Trainer(
     #logger=config.tensorboard,
     logger=WandbLogger(),
     max_epochs=config.max_epochs,
     auto_scale_batch_size=config.auto_scale_batch_size,
     min_epochs=config.min_epochs,
-    callbacks=[early_stop],
+    #callbacks=[early_stop],
     checkpoint_callback=False,
     log_every_n_steps=config.log_every_n_steps,
     flush_logs_every_n_steps=len(train_loader),
     log_gpu_memory=config.log_gpu_memory,
-    gpus=config.gpus, # set to 0 if cpu use is prefered,
-    auto_select_gpus=True,
+    gpus=gpus,
+    auto_select_gpus=gpus!=0,
+    distributed_backend='ddp',
+    #profiler="simple",
     )
 
 trainer.fit(
     model,
     train_dataloader=train_loader,
-    #val_dataloaders=val_loader # for early stopping
+    val_dataloaders=val_loader # for early stopping,
     )

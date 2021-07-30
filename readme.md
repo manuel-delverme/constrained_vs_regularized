@@ -10,11 +10,15 @@ conda activate ./env
 # Alternatively, install requirements
 # pip install --upgrade -r requirements.txt
 
-# Setup WandB
+# Setup WandB + select desired project
 wandb init
 
-# Run
+# Run for a specific config_fairness.py
 python main_fairness.py
+
+# Sweep with sweep.yml
+wandb sweep sweep.yml
+export DISPLAY=""
+export BUDDY_CURRENT_TESTING_BRANCH="local_sweep"
+wandb agent id # id is printed in the previous step.
 ```
-ToDo: indicate how to change the WandB directory
-ToDo: indicate how to create group runs

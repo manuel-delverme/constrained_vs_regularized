@@ -1,0 +1,25 @@
+# This sweep is designed to run locally with WandB but not with Experiment Buddy
+
+program: main_fairness.py # script to run
+name: "FN" # sweep name
+description: "lorem ipsum" # sweep description
+project: "constrained_vs_regularized" # WandB project
+
+method: grid # Search method. Grid is exhaustive. Others aim to minimize metrics
+
+#metric: # Used when the sweep is for hyper-parameter tuning
+#  name: "Val_Lagrangian"
+#  goal: minimize
+
+parameters:
+  random_seed:
+    values: [1,2,3,4]
+#    min: 0
+#    max: 10000
+
+command:
+  - ${env} # environment
+  - python3 # interpreter
+  - ${program} # run the "program" script from above
+  - "config_fairness.py" # config file
+#  - ${args} # if any
