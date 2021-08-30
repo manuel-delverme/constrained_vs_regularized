@@ -12,17 +12,23 @@ from pytorch_lightning.loggers import WandbLogger
 seed_everything(config.random_seed)
 
 # Training
+over_prop = (1. - config.under_prop * len(config.under_classes)) / (len(config.classes) - len(config.under_classes))
+
+props = [config.under_prop if c in config.under_classes else over_prop for c in config.classes]
+print("Proportions:", props)
+
 train_data = dataset_utils.ImbalancedDataset(
     dataset_class=config.dataset_class,
     classes=config.classes,
     transform=config.transform,
     device=config.device,
-    props=config.props,
+    props=props,
     size=config.size,
     train=True,
     download=True,
     root='./data',
     )
+print(train_data.imbal_cl_counts)
 
 b_size = config.batch_size if config.batch_size is not None else len(train_data)
 train_loader = DataLoader(
@@ -32,11 +38,6 @@ train_loader = DataLoader(
     num_workers=config.num_workers,
     pin_memory=False#torch.cuda.is_available() # introduces weird warnings
 )
-
-# JC ToDo: clean
-import numpy as np
-for img, lab in train_loader:
-    print({str(i): sum(lab==i) for i in np.unique(lab)})
 
 # Validation.
 val_data = dataset_utils.ImbalancedDataset(
@@ -57,15 +58,20 @@ val_loader = DataLoader(
     pin_memory=False#torch.cuda.is_available()
 )
 
+# Re seed to make model initialization equivalent
+seed_everything(config.random_seed)
+
 # Initialize Model
 constrained_kwargs=dict(
     optimizer_class=config.optimizer_class,
+    is_constrained=config.is_constrained,
     le_levels=config.le_levels,
     eq_levels=config.eq_levels,
     le_names=config.le_names,
     eq_names=config.eq_names,
     model_lr=config.model_lr,
     dual_lr=config.dual_lr,
+    augmented_lagrangian_coefficient = config.augmented_lagrangian_coefficient,
     log_constraints=config.log_constraints,
     metrics=config.metrics,
 )
@@ -78,7 +84,6 @@ model = LitConstrainedClassifier(
     act_fun=config.act_fun,
     act_args=config.act_args,
     balanced_ERM=config.balanced_ERM,
-    const_classes=config.const_classes,
     fairness=config.fairness,
     conv_channels=config.conv_channels,
     kernel_size=config.kernel_size,
@@ -123,5 +128,5 @@ trainer = pl.Trainer(
 trainer.fit(
     model,
     train_dataloader=train_loader,
-    val_dataloaders=val_loader # for early stopping,
+    #val_dataloaders=val_loader # for early stopping,
     )

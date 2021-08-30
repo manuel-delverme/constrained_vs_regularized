@@ -28,6 +28,6 @@ dependencies:
   - torchmetrics>=0.4
 
   - pip:
-    - torch_constrained==0.0.16
-    - wandb==0.11
+    - torch_constrained==0.0.18
+    - wandb==0.12
     - git+https://github.com/ministry-of-silly-code/experiment_buddy.git#egg=experiment_buddy

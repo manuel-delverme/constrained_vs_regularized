@@ -34,7 +34,7 @@ class LitConstrainedClassifier(LitConstrainedModel):
     """
     def __init__(
         self, im_dim, im_channels, hid_dims, act_fun, act_args,
-        const_classes, classes, kernel_size, stride, pool_k_size,
+        classes, kernel_size, stride, pool_k_size,
         conv_channels = None, balanced_ERM=False, fairness=False,
         constrained_kwargs = {}
         ):
@@ -69,8 +69,8 @@ class LitConstrainedClassifier(LitConstrainedModel):
         super().__init__(**constrained_kwargs)
 
         self.classes = classes
-        self.const_classes = const_classes
-        self.const_classes_idx = [classes.index(d) for d in const_classes]
+        #self.const_classes = const_classes
+        #self.const_classes_idx = [classes.index(d) for d in const_classes]
         self.balanced_ERM = balanced_ERM
         self.fairness = fairness
         self.out_dim = len(classes)
@@ -151,7 +151,8 @@ class LitConstrainedClassifier(LitConstrainedModel):
             else: loss += len(cl_idx)/len(x) * class_loss
 
         # Only return losses on bounded_classes
-        loc = torch.stack([loc[idx] for idx in self.const_classes_idx])
+        #loc = torch.stack([loc[idx] for idx in self.const_classes_idx])
+        loc = torch.stack(loc)
 
         if self.fairness:
             # Gap between bounded loss and aggregated loss

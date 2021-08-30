@@ -1,8 +1,8 @@
 # This sweep is designed to run locally with WandB but not with Experiment Buddy
 
 program: main_fairness.py # script to run
-name: "FN" # sweep name
-description: "lorem ipsum" # sweep description
+name: "imbal_prop/leq0.1" # sweep name
+description: "Change the proportion of samples in the under-represented class" # sweep description
 project: "constrained_vs_regularized" # WandB project
 
 method: grid # Search method. Grid is exhaustive. Others aim to minimize metrics
@@ -11,15 +11,13 @@ method: grid # Search method. Grid is exhaustive. Others aim to minimize metrics
 #  name: "Val_Lagrangian"
 #  goal: minimize
 
-parameters:
-  random_seed:
-    values: [1,2,3,4]
-#    min: 0
-#    max: 10000
-
 command:
   - ${env} # environment
   - python3 # interpreter
   - ${program} # run the "program" script from above
   - "config_fairness.py" # config file
 #  - ${args} # if any
+
+parameters:
+  under_prop:
+    values: [0.05, 0.15, 0.25]

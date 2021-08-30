@@ -13,9 +13,10 @@ torch.cuda.is_available()
 # Dataset
 dataset_class = datasets.MNIST
 
-classes = [0,1,2,3]
-props = [0.33,0.01,0.33,0.33]
-size = None
+classes = [1,4,7,9]
+under_prop = 0.7
+under_classes = [1]
+size = 5000
 
 # Image details and DataLoader
 im_dim = 28
@@ -44,24 +45,27 @@ pool_k_size = None
 # Objective function and constraints
 balanced_ERM = False
 fairness = False
-const_classes = [1]
 
 # --------------------------------------------------- torch constrained
-# Constrained optimizer
+# Solve via ERM or constrained formulation?
+is_constrained = True
+
+# (Possibly) constrained Objectives
 eq_levels = None
 eq_names = None
-le_levels = None
-le_names = ["CE_class_1"]
-model_lr = 1e-3
+le_levels = [0.01, None, None, None]
+le_names = ["CE_class_1","CE_class_4","CE_class_7","CE_class_9"]
+model_lr = 0.005
 dual_lr = 1e-2
 log_constraints = True
-optimizer_class = torch.optim.Adam
+augmented_lagrangian_coefficient = False # false if not used
+optimizer_class = torch_constrained.ExtraAdam
 
 #----------------------------------------------------- training
 stop_delta = 1e-6
 stop_patience = 15
 
-max_epochs = 1000
+max_epochs = 500
 auto_scale_batch_size = False
 min_epochs = 10
 log_every_n_steps = 1
@@ -78,6 +82,7 @@ metrics = MetricCollection({
 
 # Experiment Buddy
 experiment_buddy.register(locals())
-tensorboard = experiment_buddy.deploy()
+tensorboard = experiment_buddy.deploy(wandb_kwargs={"tags": ["fix_data_size", "imbalance", "XG"]})
 # sweep_yaml = "" # for cluster sweeps
 # wandb_kwargs={"group": "GPU usage"} # for group runs
+# wandb_kwargs={"tags": ["GPU usage"]} # for tags

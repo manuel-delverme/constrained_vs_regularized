@@ -7,19 +7,23 @@ import pytorch_lightning as pl
 
 def tensor2dict(tensor, prefix, const_names=None):
     # Converts 1d tensor to dictionary. Used for logging
-    if const_names is None:
-        const_names = ["aux_objective" + str(i+1) for i,_ in enumerate(tensor)]
     return {prefix + name: val for name,val in zip(const_names,tensor)}
 
-def multipliers2dict(mult_list, mult_name):
+def multipliers2dict(mult_list, mult_name, const_names=None):
     # Converts 1d tensor to dictionary. Used for logging.
-    # JC ToDo: remove -1 parameter from forward call
-    values = {mult_name + '_' + str(i+1): val.forward(-1) for i,val in enumerate(mult_list)}
-    grads = {mult_name + '_grad_' + str(i+1): - val.weight.grad for i,val in enumerate(mult_list)}
-    return {**values, **grads}
+    # Levels and grads. JC ToDo: why is this so messy?
+    multipliers = mult_list[0].forward(-1) # JC ToDo: remove -1 placeholder
+    values = multipliers.data[0]
+    grads = - multipliers.grad[0] # - is because we do descent on -multiplier
+
+    # Dicts with names
+    value_dict = {mult_name + name: v for v, name in zip(values, const_names)}
+    grad_dict = {mult_name + 'grad_' + name: g for g, name in zip(grads, const_names)}
+
+    return {**value_dict, **grad_dict}
 
 def success2dict(tensor, levels, prefix, const_names=None):
-    success = [float(t<l) for t, l in zip(tensor.detach(), levels)]
+    success = [float(t<l) if l is not None else None for t, l in zip(tensor.detach(), levels)]
     if const_names is None:
         const_names = ["const_" + str(i+1) for i,_ in enumerate(tensor)]
     return {prefix + "success_" + name: val for name,val in zip(const_names,success)}
@@ -27,17 +31,18 @@ def success2dict(tensor, levels, prefix, const_names=None):
 def reduce(tensor):
     # Produces the mean of a logs of tensor, ignoring nans.
     #tensor = tensor[tensor>0] # JC ToDo: remvoe
-    tensor = tensor.detach()
+    tensor = tensor.detach().cpu()
     return np.nanmean(tensor)
+
 class LitConstrainedModel(pl.LightningModule):
     """
     This class implements a pytorch lightning module with the possibility
     of training under a torch_constrained framework.
     """
     def __init__(
-        self, optimizer_class, optimizer_kwargs={}, le_levels=None, eq_levels=None,
-        le_names=None, eq_names=None, model_lr=1e-3, dual_lr=0., gamma=1,
-        log_constraints=False, metrics = None):
+        self, optimizer_class, optimizer_kwargs={}, is_constrained=False, le_levels=None, eq_levels=None,
+        le_names=None, eq_names=None, model_lr=1e-3, dual_lr=0., augmented_lagrangian_coefficient = False,
+        gamma=1, log_constraints=False, metrics=None):
         """
         Args:
             optimizer_class (torch optimizer): an optimizer class for the model's
@@ -77,18 +82,20 @@ class LitConstrainedModel(pl.LightningModule):
 
         self.model_lr = model_lr
         self.dual_lr = dual_lr
-        #self.le_damp = le_damp
+        self.augmented_lagrangian_coefficient=augmented_lagrangian_coefficient
+
+        # Are we solving a constrained optimization problem?
+        self.is_constrained = is_constrained
 
         # Constraints
-        self.le_levels = None if le_levels is None else torch.tensor(le_levels)
+        self.const_le_idx = None if le_levels is None else [i for i, le in enumerate(le_levels) if le is not None]
+        self.le_levels = None if le_levels is None else torch.tensor([le_levels[i] for i in self.const_le_idx])
         self.le_names = None if le_names is None else le_names
 
         # JC ToDo: add slack values for equality constraints
-        self.eq_levels = None if eq_levels is None else torch.tensor(eq_levels)
+        self.const_eq_idx = None if eq_levels is None else [i for i, le in enumerate(eq_levels) if le is not None]
+        self.eq_levels = None if eq_levels is None else torch.tensor([eq_levels[i] for i in self.const_eq_idx])
         self.eq_names = None if eq_names is None else eq_names
-
-        # Are we solving a constrained optimization problem?
-        self.is_constrained = le_levels is not None or eq_levels is not None
 
         # Logging
         self.log_constraints = log_constraints
@@ -114,9 +121,10 @@ class LitConstrainedModel(pl.LightningModule):
             # Then its a constrained optimization problem
             optimizer = torch_constrained.ConstrainedOptimizer(
                 self.optimizer_class, # let the user decide
-                torch_constrained.ExtraSGD, # dual
+                torch.optim.SGD if self.augmented_lagrangian_coefficient else torch_constrained.ExtraSGD, # dual
                 lr_x=self.model_lr,
                 lr_y=self.dual_lr,
+                augmented_lagrangian_coefficient=self.augmented_lagrangian_coefficient,
                 primal_parameters=list(self.parameters()),
             )
         else:
@@ -143,8 +151,10 @@ class LitConstrainedModel(pl.LightningModule):
             1D tensor: feasibility gaps of the constraints
         """
         levels = self.le_levels if const_type == "inequality" else self.eq_levels
+        idx = self.const_le_idx if const_type == "inequality" else self.const_eq_idx
         if levels is not None:
-            gaps = vals - levels.to(self.device)
+            gaps = vals[idx] - levels.to(self.device)
+            gaps = torch.nan_to_num(gaps) # if vals was nan
             gaps = [gaps.reshape(1, -1), ] # format for optimizer. Necessary?
         else: gaps = None
         return gaps
@@ -156,8 +166,7 @@ class LitConstrainedModel(pl.LightningModule):
         Args:
             batch (tensor or structure of tensors): a training batch.
         """
-        # For logging - need to PR torch_constrained
-        loss, eq_vals, le_vals = self.eval_losses(batch)
+        loss, eq_vals, le_vals = self.eval_losses(batch) # For logging - need to PR torch_constrained
 
         if self.is_constrained:
             def closure():
@@ -232,25 +241,39 @@ class LitConstrainedModel(pl.LightningModule):
         prefix = "train/" if train else "val/"
 
         if lagrangian is not None:
-            self.log_dict({prefix + "Lagrangian": lagrangian}, prog_bar=True)
-        self.log_dict({prefix + "ERM": loss}, prog_bar=True)
+            self.log_dict({prefix + "Lagrangian": lagrangian}, prog_bar=True, on_step=False, on_epoch=True, reduce_fx=reduce)
+        self.log_dict({prefix + "ERM": loss}, prog_bar=True, on_step=False, on_epoch=True, reduce_fx=reduce)
 
         if self.log_constraints:
             if train and self.is_constrained:
                 # Equality multipliers
                 nus = self.optimizers().optimizer.equality_multipliers #JC ToDo
-                if len(nus)>0: self.log_dict(multipliers2dict(nus, prefix + "nu"))
+                if len(nus)>0: self.log_dict(multipliers2dict(nus, prefix + "nu/", [self.eq_names[i] for i in self.const_eq_idx]), on_step=False, on_epoch=True, reduce_fx=reduce)
                 # Inequality multipliers
                 lambdas = self.optimizers().optimizer.inequality_multipliers # JC ToDo
-                if len(lambdas)>0: self.log_dict(multipliers2dict(lambdas, prefix + "lambda"))
+                if len(lambdas)>0: self.log_dict(multipliers2dict(lambdas, prefix + "lam/", [self.le_names[i] for i in self.const_le_idx]), on_step=False, on_epoch=True, reduce_fx=reduce)
                 # Success of each constraint
-            if self.is_constrained:
                 # JC ToDo: add constraint satisfaction metric for equality.
-                self.log_dict(success2dict(le_vals, self.le_levels, prefix, self.le_names), reduce_fx=reduce)
+                self.log_dict(success2dict(le_vals, self.le_levels, prefix, self.le_names), on_step=False, on_epoch=True, reduce_fx=reduce)
+
             if eq_vals is not None:
-                self.log_dict(tensor2dict(eq_vals, prefix, self.eq_names), prog_bar=True, reduce_fx=reduce)
+                self.log_dict(tensor2dict(eq_vals, prefix, self.eq_names), prog_bar=True, on_step=False, on_epoch=True, reduce_fx=reduce)
             if le_vals is not None:
-                self.log_dict(tensor2dict(le_vals, prefix, self.le_names), prog_bar=True, reduce_fx=reduce)
+                self.log_dict(tensor2dict(le_vals, prefix, self.le_names), prog_bar=True, on_step=False, on_epoch=True, reduce_fx=reduce)
+
+        # JC ToDo: do not always log this
+        if train:
+            for id, params in enumerate(self.parameters()):
+                norm = params.norm()
+                grad = params.grad.norm()
+                layer = np.round(id/2)
+                if id % 2 == 0:
+                    self.log_dict({"model/weight_norm_layer_"+str(layer): norm})
+                    self.log_dict({"model/w_grad_norm_layer_"+str(layer): grad})
+                else:
+                    self.log_dict({"model/bias_norm_layer_"+str(layer): norm})
+                    self.log_dict({"model/b_grad_norm_layer_"+str(layer): grad})
+
 
     def get_const_levels(self, loader, loss_type, loss_idx, epochs,
                         optimizer_class, optimizer_kwargs):
